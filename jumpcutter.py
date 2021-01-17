@@ -127,6 +127,18 @@ URL = args.url
 FRAME_QUALITY = args.frame_quality
 
 
+def save_audio(input_file, temp_folder):
+    command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
+        SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
+    subprocess.call(command, shell=True)
+
+
+def create_params_file(temp_folder):
+    command = "ffmpeg -i " + temp_folder + "/input.mp4 2>&1"
+    with open(temp_folder + "/params.txt", "w") as f:
+        subprocess.call(command, shell=True, stdout=f)
+
+
 def run(input_file, frame_rate=frame_rate):
     output_file = args.output_file if len(args.output_file) >= 1 else output_filename(input_file, args.output_dir)
 
@@ -140,23 +152,16 @@ def run(input_file, frame_rate=frame_rate):
     if not os.path.exists(args.output_dir):
         create_path(args.output_dir)
 
+    save_audio(input_file, temp_folder)
     command = "ffmpeg -i " + input_file + " -qscale:v " + str(
         FRAME_QUALITY) + " " + temp_folder + "/frame%06d.jpg -hide_banner"
     subprocess.call(command, shell=True)
-
-    command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
-        SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
-
-    subprocess.call(command, shell=True)
-
-    command = "ffmpeg -i " + temp_folder + "/input.mp4 2>&1"
-    with open(temp_folder + "/params.txt", "w") as f:
-        subprocess.call(command, shell=True, stdout=f)
 
     sample_rate, audio_data = wavfile.read(temp_folder + "/audio.wav")
     audio_sample_count = audio_data.shape[0]
     max_audio_volume = get_max_volume(audio_data)
 
+    create_params_file(temp_folder)
     with open(temp_folder + "/params.txt", 'r+') as f:
         pre_params = f.read()
     params = pre_params.split('\n')
