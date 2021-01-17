@@ -1,0 +1,4 @@
+audiotsm
+scipy
+numpy
+pytube
