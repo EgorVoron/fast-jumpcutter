@@ -273,22 +273,23 @@ if __name__ == '__main__':
         q.append(Video(url=args.url, output_file=args.output_file))
     elif args.url_file:
         file_path = args.url_file
-        assert os.path.isfile(file_path), f"invalid file path: {file_path}"
+        abspath = os.path.abspath(file_path)
+        assert os.path.isfile(abspath), f"invalid urls file path: {abspath}"
         with open(file_path, 'r') as f:
             for url in f.read().split('\n'):
                 q.append(Video(url=url, output_file=args.output_file))
     elif args.input_file:
-        if not os.path.isfile(args.input_file):
-            raise ValueError(f'file {args.input_file} does not exist')
+        abspath = os.path.abspath(args.input_file)
+        assert os.path.isfile(abspath), f"invalid input file path: {abspath}"
         q.append(Video(file_path=args.input_file, output_file=args.output_file))
     elif args.input_dir:
-        if not os.path.isdir(args.input_dir):
-            raise ValueError(f'{args.input_dir} is not a valid directory')
+        abspath = os.path.abspath(args.input_dir)
+        assert os.path.isdir(abspath), f"invalid directory: {abspath}"
         for filename in os.listdir(args.input_dir):
-            if not os.path.isfile(filename):
-                print(f'file {filename} does not exist')
-                continue
             full_filename = os.path.join(args.input_dir, filename)
+            if not os.path.isfile(full_filename):
+                print(f'file {full_filename} does not exist')
+                continue
             if valid_format(full_filename):
                 q.append(Video(file_path=full_filename, output_file=args.output_file))
             else:
