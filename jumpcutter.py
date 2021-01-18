@@ -103,10 +103,10 @@ class Video:
         command = f"ffmpeg -i {self.filename} -qscale:v {FRAME_QUALITY} {self.temp_folder}/frame%06d.jpg -hide_banner"
         subprocess.call(command, shell=True)
 
-    def create_params_file(self):
-        command = "ffmpeg -i " + self.temp_folder + "/input.mp4 2>&1"
-        with open(self.temp_folder + "/params.txt", "w") as f:
-            subprocess.call(command, shell=True, stdout=f)
+    # def create_params_file(self):
+    #     command = "ffmpeg -i " + self.temp_folder + "/input.mp4 2>&1"
+    #     with open(self.temp_folder + "/params.txt", "w") as f:
+    #         subprocess.call(command, shell=True, stdout=f)
 
     def final_concatenation(self):
         command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " \
@@ -122,6 +122,103 @@ class Video:
         if output_frame == 1 or output_frame % 1000 == 999:
             print(str(output_frame + 1) + " time-altered frames saved.")
         return True
+
+    def process_and_concatenate(self):
+        audio_fade_envelope_size = 400  # smooth out transition's audio by quickly fading in/out
+
+        self.save_audio()
+
+        sample_rate, audio_data = wavfile.read(self.temp_folder + "/audio.wav")
+        audio_sample_count = audio_data.shape[0]
+        max_audio_volume = get_max_volume(audio_data)
+
+        samples_per_frame = sample_rate / self.fps
+
+        audio_frame_count = int(math.ceil(audio_sample_count / samples_per_frame))
+
+        has_loud_audio = np.zeros(audio_frame_count)
+
+        for i in range(audio_frame_count):
+            start = int(i * samples_per_frame)
+            end = min(int((i + 1) * samples_per_frame), audio_sample_count)
+            audio_chunks = audio_data[start:end]
+            max_chunks_volume = float(get_max_volume(audio_chunks)) / max_audio_volume
+            if max_chunks_volume >= SILENT_THRESHOLD:
+                has_loud_audio[i] = 1
+
+        chunks = [[0, 0, 0]]
+        should_include_frame = np.zeros(audio_frame_count)
+
+        last_idx = 0
+        for i in range(audio_frame_count):
+            start = int(max(0, i - FRAME_SPREADAGE))
+            end = int(min(audio_frame_count, i + 1 + FRAME_SPREADAGE))
+            should_include_frame[i] = np.max(has_loud_audio[start:end])
+            if i >= 1 and should_include_frame[i] != should_include_frame[i - 1]:  # Did we flip?
+                chunks.append([chunks[-1][1], i, should_include_frame[i - 1]])
+            last_idx = i
+
+        chunks.append([chunks[-1][1], audio_frame_count, should_include_frame[last_idx - 1]])
+        chunks = chunks[1:]
+
+        output_audio_data = np.zeros((0, audio_data.shape[1]))
+        output_pointer = 0
+
+        last_existing_frame = None
+
+        command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {self.filename}"
+        duration = subprocess.check_output(command, shell=True)
+
+        frames_num = int(float(duration) * self.fps)
+        signed_frames = [False for _ in range(frames_num)]
+        output_frames = []
+
+        for chunk in chunks:
+            audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
+
+            s_file = self.temp_folder + "/tempStart.wav"
+            e_file = self.temp_folder + "/tempEnd.wav"
+            wavfile.write(s_file, SAMPLE_RATE, audio_chunk)
+            with WavReader(s_file) as reader:
+                with WavWriter(e_file, reader.channels, reader.samplerate) as writer:
+                    tsm = phasevocoder(reader.channels, speed=NEW_SPEED[int(chunk[2])])
+                    tsm.run(reader, writer)
+            _, altered_audio_data = wavfile.read(e_file)
+            leng = altered_audio_data.shape[0]
+            end_pointer = output_pointer + leng
+            output_audio_data = np.concatenate((output_audio_data, altered_audio_data / max_audio_volume))
+
+            if leng < audio_fade_envelope_size:
+                output_audio_data[output_pointer:end_pointer] = 0
+            else:
+                pre_mask = np.arange(audio_fade_envelope_size) / audio_fade_envelope_size
+                mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)
+                output_audio_data[output_pointer:output_pointer + audio_fade_envelope_size] *= mask
+                output_audio_data[end_pointer - audio_fade_envelope_size:end_pointer] *= 1 - mask
+
+            start_output_frame = int(math.ceil(output_pointer / samples_per_frame))
+            end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
+
+            for outputFrame in range(start_output_frame, end_output_frame):
+                input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (outputFrame - start_output_frame))
+                if input_frame < frames_num - 2:
+                    signed_frames[input_frame + 1] = True
+                    last_existing_frame = input_frame
+                else:
+                    signed_frames[last_existing_frame] = True
+                output_frames.append(outputFrame)
+
+            output_pointer = end_pointer
+
+        j = 0
+        for i, frame_sign in enumerate(signed_frames):
+            if frame_sign:
+                self.copy_frame(i, j)
+                j += 1
+        wavfile.write(self.temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
+
+        self.final_concatenation()
+        delete_path(self.temp_folder)
 
 
 def valid_format(filename):
@@ -151,104 +248,6 @@ def delete_path(s):
         print(e)
 
 
-def process_and_concatenate(video):
-    audio_fade_envelope_size = 400  # smooth out transition's audio by quickly fading in/out
-
-    video.save_audio()
-
-    sample_rate, audio_data = wavfile.read(video.temp_folder + "/audio.wav")
-    audio_sample_count = audio_data.shape[0]
-    max_audio_volume = get_max_volume(audio_data)
-
-    samples_per_frame = sample_rate / video.fps
-
-    audio_frame_count = int(math.ceil(audio_sample_count / samples_per_frame))
-
-    has_loud_audio = np.zeros(audio_frame_count)
-
-    for i in range(audio_frame_count):
-        start = int(i * samples_per_frame)
-        end = min(int((i + 1) * samples_per_frame), audio_sample_count)
-        audio_chunks = audio_data[start:end]
-        max_chunks_volume = float(get_max_volume(audio_chunks)) / max_audio_volume
-        if max_chunks_volume >= SILENT_THRESHOLD:
-            has_loud_audio[i] = 1
-
-    chunks = [[0, 0, 0]]
-    should_include_frame = np.zeros(audio_frame_count)
-
-    last_idx = 0
-    for i in range(audio_frame_count):
-        start = int(max(0, i - FRAME_SPREADAGE))
-        end = int(min(audio_frame_count, i + 1 + FRAME_SPREADAGE))
-        should_include_frame[i] = np.max(has_loud_audio[start:end])
-        if i >= 1 and should_include_frame[i] != should_include_frame[i - 1]:  # Did we flip?
-            chunks.append([chunks[-1][1], i, should_include_frame[i - 1]])
-        last_idx = i
-
-    chunks.append([chunks[-1][1], audio_frame_count, should_include_frame[last_idx - 1]])
-    chunks = chunks[1:]
-
-    output_audio_data = np.zeros((0, audio_data.shape[1]))
-    output_pointer = 0
-
-    last_existing_frame = None
-
-    command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {video.filename}"
-    duration = subprocess.check_output(command, shell=True)
-
-    frames_num = int(float(duration) * video.fps)
-    signed_frames = [False for _ in range(frames_num)]
-    output_frames = []
-
-    for chunk in chunks:
-        audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
-
-        s_file = video.temp_folder + "/tempStart.wav"
-        e_file = video.temp_folder + "/tempEnd.wav"
-        wavfile.write(s_file, SAMPLE_RATE, audio_chunk)
-        with WavReader(s_file) as reader:
-            with WavWriter(e_file, reader.channels, reader.samplerate) as writer:
-                tsm = phasevocoder(reader.channels, speed=NEW_SPEED[int(chunk[2])])
-                tsm.run(reader, writer)
-        _, altered_audio_data = wavfile.read(e_file)
-        leng = altered_audio_data.shape[0]
-        end_pointer = output_pointer + leng
-        output_audio_data = np.concatenate((output_audio_data, altered_audio_data / max_audio_volume))
-
-        if leng < audio_fade_envelope_size:
-            output_audio_data[output_pointer:end_pointer] = 0
-        else:
-            pre_mask = np.arange(audio_fade_envelope_size) / audio_fade_envelope_size
-            mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)
-            output_audio_data[output_pointer:output_pointer + audio_fade_envelope_size] *= mask
-            output_audio_data[end_pointer - audio_fade_envelope_size:end_pointer] *= 1 - mask
-
-        start_output_frame = int(math.ceil(output_pointer / samples_per_frame))
-        end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
-
-        for outputFrame in range(start_output_frame, end_output_frame):
-            input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (outputFrame - start_output_frame))
-            if input_frame < frames_num - 2:
-                signed_frames[input_frame + 1] = True
-                last_existing_frame = input_frame
-            else:
-                signed_frames[last_existing_frame] = True
-            output_frames.append(outputFrame)
-
-        output_pointer = end_pointer
-
-    j = 0
-    for i, frame_sign in enumerate(signed_frames):
-        if frame_sign:
-            video.copy_frame(i, j)
-            j += 1
-    wavfile.write(video.temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
-
-    video.final_concatenation()
-    delete_path(video.temp_folder)
-
-
 def run(video):
     if os.path.exists(video.temp_folder):
         delete_path(video.temp_folder)
@@ -257,7 +256,7 @@ def run(video):
     if not os.path.exists(OUTPUT_DIR):
         create_path(OUTPUT_DIR)
     process_1 = Process(target=video.save_video)
-    process_2 = Process(target=process_and_concatenate, args=(video,))
+    process_2 = Process(target=video.process_and_concatenate)
     process_1.start()
     process_2.start()
     if not PARALLEL_ALL:
