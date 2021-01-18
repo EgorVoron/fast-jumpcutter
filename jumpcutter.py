@@ -10,6 +10,7 @@ import os
 import argparse
 from pytube import YouTube
 from collections import deque
+from multiprocessing import Process
 
 
 def download_file(url):
@@ -18,7 +19,7 @@ def download_file(url):
     name = stream.download()
     new_name = name.replace(' ', '_')
     os.rename(name, new_name)
-    return new_name, fps
+    return new_name, fps,
 
 
 def valid_format(filename):
@@ -60,7 +61,7 @@ def create_path(s):
 def delete_path(s):
     try:
         rmtree(s, ignore_errors=False)
-    except OSError() as e:
+    except Exception as e:
         print("Deletion of the directory %s failed" % s)
         print(e)
 
@@ -128,10 +129,19 @@ else:
 URL = args.url
 FRAME_QUALITY = args.frame_quality
 
+import multiprocessing
+
 
 def save_audio(input_file, temp_folder):
+    # multiprocessing.freeze_support()
     command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
         SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
+    subprocess.call(command, shell=True)
+
+
+def save_video(input_file, temp_folder):
+    command = "ffmpeg -i " + input_file + " -qscale:v " + str(
+        FRAME_QUALITY) + " " + temp_folder + "/frame%06d.jpg -hide_banner"
     subprocess.call(command, shell=True)
 
 
@@ -141,29 +151,26 @@ def create_params_file(temp_folder):
         subprocess.call(command, shell=True, stdout=f)
 
 
-def run(input_file, frame_rate=frame_rate):
+def final_concatenation(temp_folder, output_file):
+    command = f"ffmpeg -framerate {frame_rate} -i " + temp_folder + "/newFrame%06d.jpg -i " + temp_folder + "/audioNew.wav -strict -2 " + output_file
+    subprocess.call(command, shell=True)
+
+    # delete_path(temp_folder)
+
+
+def process_and_concatenate(input_file, temp_folder, frame_rate=frame_rate, fps=frame_rate):
     output_file = args.output_file if len(args.output_file) >= 1 else output_filename(input_file, args.output_dir)
 
-    temp_folder = "TEMP"
     audio_fade_envelope_size = 400  # smooth out transition's audio by quickly fading in/out
 
-    if os.path.exists(temp_folder):
-        delete_path(temp_folder)
-    create_path(temp_folder)
-
-    if not os.path.exists(args.output_dir):
-        create_path(args.output_dir)
-
     save_audio(input_file, temp_folder)
-    command = "ffmpeg -i " + input_file + " -qscale:v " + str(
-        FRAME_QUALITY) + " " + temp_folder + "/frame%06d.jpg -hide_banner"
-    subprocess.call(command, shell=True)
 
     sample_rate, audio_data = wavfile.read(temp_folder + "/audio.wav")
     audio_sample_count = audio_data.shape[0]
     max_audio_volume = get_max_volume(audio_data)
 
     create_params_file(temp_folder)
+
     with open(temp_folder + "/params.txt", 'r+') as f:
         pre_params = f.read()
     params = pre_params.split('\n')
@@ -202,6 +209,19 @@ def run(input_file, frame_rate=frame_rate):
     output_pointer = 0
 
     last_existing_frame = None
+
+    command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {input_file}"
+    duration = subprocess.check_output(command, shell=True)
+    # print('frames_num'.upper(), res)
+    # print('fps'.upper(), fps)
+    # exit()
+    frames_num = int(float(duration) * fps)
+    # print('frames_num'.upper(), frames_num)
+    # exit()
+    signed_frames = [False for _ in range(frames_num)]
+
+    output_frames = []
+
     for chunk in chunks:
         audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
 
@@ -228,31 +248,57 @@ def run(input_file, frame_rate=frame_rate):
 
         start_output_frame = int(math.ceil(output_pointer / samples_per_frame))
         end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
+
         for outputFrame in range(start_output_frame, end_output_frame):
             input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (outputFrame - start_output_frame))
-            did_it_work = copy_frame(input_frame, outputFrame, temp_folder)
-            if did_it_work:
+            # did_it_work = copy_frame(input_frame, outputFrame, temp_folder)
+            if input_frame < frames_num - 2:
+                signed_frames[input_frame + 1] = True
                 last_existing_frame = input_frame
             else:
-                copy_frame(last_existing_frame, outputFrame, temp_folder)
+                signed_frames[last_existing_frame] = True
+            output_frames.append(outputFrame)
 
         output_pointer = end_pointer
 
-    wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
-
-    command = "ffmpeg -framerate " + str(
-        frame_rate) + " -i " + temp_folder + "/newFrame%06d.jpg -i " + temp_folder + "/audioNew.wav -strict -2 " + output_file
-    subprocess.call(command, shell=True)
-
-    delete_path(temp_folder)
-
-
-i = 0
-while len(q) != 0:
-    file = q.popleft()
     try:
-        print(f'Downloading {i} video')
-        run(file)
-        i += 1
-    except Exception as ex:
-        print(f'Exception at {file}:', ex)
+        j = 0
+        for i, frame_sign in enumerate(signed_frames):
+            if frame_sign:
+                copy_frame(i, j, temp_folder)
+                j += 1
+            print(j)
+        wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
+        print("ARRAY:", signed_frames)
+    except:
+        exit()
+
+    final_concatenation(temp_folder, output_file)
+
+
+def run(input_file):
+    temp_folder = "TEMP"
+
+    if os.path.exists(temp_folder):
+        delete_path(temp_folder)
+    create_path(temp_folder)
+
+    if not os.path.exists(args.output_dir):
+        create_path(args.output_dir)
+    process_1 = Process(target=save_audio, args=(input_file, temp_folder))
+    # process_2 = Process(target=process_and_concatenate, args=(input_file, temp_folder))
+    process_1.start()
+    # process_2.start()
+
+
+if __name__ == '__main__':
+    # multiprocessing.freeze_support()
+    i = 0
+    while len(q) != 0:
+        file = q.popleft()
+        try:
+            print(f'Downloading {i} video')
+            run(file)
+            i += 1
+        except Exception as ex:
+            print(f'Exception at {file}:', ex)
