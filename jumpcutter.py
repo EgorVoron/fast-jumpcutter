@@ -255,7 +255,10 @@ if __name__ == '__main__':
         assert os.path.isfile(abspath), f"invalid urls file path: {abspath}"
         with open(file_path, 'r') as f:
             for url in f.read().split('\n'):
-                q.append(Video(url=url, output_file=args.output_file))
+                if url:
+                    q.append(Video(url=url, output_file=args.output_file))
+                else:
+                    print(f'invalid url: {url}')
     elif args.input_file:
         abspath = os.path.abspath(args.input_file)
         assert os.path.isfile(abspath), f"invalid input file path: {abspath}"
