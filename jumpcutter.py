@@ -27,7 +27,7 @@ parser.add_argument('--output_dir', type=str, default="output_videos",
 # CONSTANTS
 parser.add_argument('--parallel_all', type=int, default=0,
                     help='Download and process all videos at one time(1), or one by one(0)? Default is 0.'
-                         'Use wisely - if you insert some big videos, then parallel processing can'
+                         'Use it wisely - if you insert some big videos, then parallel processing can'
                          ' kill your computer')
 parser.add_argument('--resolution', type=int, default=480, help='Default resolution of youtube video to download')
 parser.add_argument('--silent_threshold', type=float, default=0.03,
@@ -267,19 +267,17 @@ if __name__ == '__main__':
 
     q = deque()
     if args.url:
-        q.append(
-            Video(output_file=args.output_file, url=args.url))
+        q.append(Video(url=args.url, output_file=args.output_file))
     elif args.url_file:
         file_path = args.url_file
         assert os.path.isfile(file_path), f"invalid file path: {file_path}"
         with open(file_path, 'r') as f:
             for url in f.read().split('\n'):
-                q.append(
-                    Video(output_file=args.output_file, url=url))
+                q.append(Video(url=url, output_file=args.output_file))
     elif args.input_file:
         if not os.path.isfile(args.input_file):
             raise ValueError(f'file {args.input_file} does not exist')
-        q.append(Video(output_file=args.output_file, file_path=args.input_file))
+        q.append(Video(file_path=args.input_file, output_file=args.output_file))
     elif args.input_dir:
         if not os.path.isdir(args.input_dir):
             raise ValueError(f'{args.input_dir} is not a valid directory')
@@ -289,7 +287,7 @@ if __name__ == '__main__':
                 continue
             full_filename = os.path.join(args.input_dir, filename)
             if valid_format(full_filename):
-                q.append(Video(output_file=args.output_file, file_path=full_filename))
+                q.append(Video(file_path=full_filename, output_file=args.output_file))
             else:
                 print(f'Invalid file format: {full_filename}')
     else:
