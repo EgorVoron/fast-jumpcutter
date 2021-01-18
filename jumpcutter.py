@@ -3,23 +3,114 @@ from audiotsm import phasevocoder
 from audiotsm.io.wav import WavReader, WavWriter
 from scipy.io import wavfile
 import numpy as np
-import re
 import math
 from shutil import rmtree
 import os
 import argparse
-from pytube import YouTube
+from pytube import YouTube, StreamQuery
 from collections import deque
 from multiprocessing import Process
+from random import randint
+
+# VIDEO INITIALISATION INFO
+parser = argparse.ArgumentParser(
+    description='Modifies a video file to play at different speeds when there is sound vs. silence.')
+parser.add_argument('--input_file', type=str, help='Video file to modify')
+parser.add_argument('--input_dir', type=str, help='Directory with videos to modify')
+parser.add_argument('--url_file', type=str, help='Path to file with youtube urls')
+parser.add_argument('--url', type=str, help='Youtube url of video')
+parser.add_argument('--output_file', type=str, default="",
+                    help="the output file")
+parser.add_argument('--output_dir', type=str, default="output_videos",
+                    help="Directory for output videos, default is \"..\output_videos\"")
+
+# CONSTANTS
+parser.add_argument('--parallel_all', type=int, default=0,
+                    help='Download and process all videos at one time(1), or one by one(0)? Default is 0.'
+                         'Use wisely - if you insert some big videos, then parallel processing can'
+                         ' kill your computer')
+parser.add_argument('--resolution', type=int, default=480, help='Default resolution of youtube video to download')
+parser.add_argument('--silent_threshold', type=float, default=0.03,
+                    help="Volume value that frames' audio needs to surpass to be consider \"sounded\". "
+                         "It ranges from 0 (silence) to 1 (max volume)")
+parser.add_argument('--sounded_speed', type=float, default=1.00,
+                    help="Speed that sounded (spoken) frames should be played at, usually 1")
+parser.add_argument('--silent_speed', type=float, default=5.00,
+                    help="Speed that silent frames should be played at")
+parser.add_argument('--frame_margin', type=float, default=1,
+                    help="Some silent frames adjacent to sounded frames are included to provide context. "
+                         "This variable shows how many frames on either the side of speech should be included")
+parser.add_argument('--sample_rate', type=float, default=44100, help="Sample rate of the input and output videos")
+parser.add_argument('--frame_quality', type=int, default=3,
+                    help="Quality of frames to be extracted from input video. "
+                         "1 is highest, 31 is lowest, 3 is the default.")
+args = parser.parse_args()
+
+SAMPLE_RATE = args.sample_rate
+SILENT_THRESHOLD = args.silent_threshold
+FRAME_SPREADAGE = args.frame_margin
+NEW_SPEED = [args.silent_speed, args.sounded_speed]
+FRAME_QUALITY = args.frame_quality
+OUTPUT_DIR = args.output_dir
+RESOLUTION = args.resolution
+PARALLEL_ALL = args.parallel_all
 
 
-def download_file(url):
-    stream = YouTube(url).streams.get_highest_resolution()
-    fps = stream.fps
-    name = stream.download()
-    new_name = name.replace(' ', '_')
-    os.rename(name, new_name)
-    return new_name, fps,
+class Video:
+    def __init__(self, output_file, url=None, file_path=None):
+        self.temp_folder = "TEMP" + str(randint(1, 10 ** 5))
+        if url:
+            streams: StreamQuery = YouTube(url).streams
+            highest_stream = streams.get_highest_resolution()
+            highest_res = int(highest_stream.resolution[:-1])
+            stream = None
+            if highest_res > RESOLUTION:
+                for cur_stream in streams:
+                    if int(cur_stream.resolution[:-1]) == RESOLUTION:
+                        stream = cur_stream
+                        break
+                if not stream:
+                    stream = highest_res
+            else:
+                stream = highest_stream
+            self.fps = stream.fps
+            name = stream.download()
+            self.filename = name.replace(' ', '_')
+            os.rename(name, self.filename)
+        elif file_path:
+            self.filename = file_path
+            self.fps = self.get_fps()
+        else:
+            raise ValueError('cannot initialize video')
+
+        self.output_filename = output_file if output_file else self.get_output_filename()
+
+    def get_output_filename(self):
+        basename = os.path.basename(self.filename)
+        dot_idx = basename.rfind(".")
+        return os.path.join(OUTPUT_DIR, basename[:dot_idx] + "_ALTERED" + basename[dot_idx:])
+
+    def get_fps(self):
+        command = "ffprobe -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate " + self.filename
+        fps_str = str(subprocess.check_output(command, shell=True))
+        return int(fps_str[2:4])
+
+    def save_audio(self):
+        command = f"ffmpeg -i {self.filename} -ab 160k -ac 2 -ar {SAMPLE_RATE} -vn {self.temp_folder}/audio.wav"
+        subprocess.call(command, shell=True)
+
+    def save_video(self):
+        command = f"ffmpeg -i {self.filename} -qscale:v {FRAME_QUALITY} {self.temp_folder}/frame%06d.jpg -hide_banner"
+        subprocess.call(command, shell=True)
+
+    def create_params_file(self):
+        command = "ffmpeg -i " + self.temp_folder + "/input.mp4 2>&1"
+        with open(self.temp_folder + "/params.txt", "w") as f:
+            subprocess.call(command, shell=True, stdout=f)
+
+    def final_concatenation(self):
+        command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " + self.temp_folder + "/audioNew.wav -strict -2 " + self.output_filename
+        subprocess.call(command, shell=True)
 
 
 def valid_format(filename):
@@ -45,12 +136,6 @@ def copy_frame(input_frame, output_frame, tmp_folder):
     return True
 
 
-def output_filename(filename, output_dir):
-    basename = os.path.basename(filename)
-    dot_idx = basename.rfind(".")
-    return os.path.join(output_dir, basename[:dot_idx] + "_ALTERED" + basename[dot_idx:])
-
-
 def create_path(s):
     try:
         os.mkdir(s)
@@ -66,52 +151,16 @@ def delete_path(s):
         print(e)
 
 
-def save_audio(input_file, temp_folder, SAMPLE_RATE):
-    command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
-        SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
-    subprocess.call(command, shell=True)
-
-
-def save_video(input_file, temp_folder, FRAME_QUALITY):
-    command = "ffmpeg -i " + input_file + " -qscale:v " + str(
-        FRAME_QUALITY) + " " + temp_folder + "/frame%06d.jpg -hide_banner"
-    subprocess.call(command, shell=True)
-
-
-def create_params_file(temp_folder):
-    command = "ffmpeg -i " + temp_folder + "/input.mp4 2>&1"
-    with open(temp_folder + "/params.txt", "w") as f:
-        subprocess.call(command, shell=True, stdout=f)
-
-
-def final_concatenation(temp_folder, output_file, frame_rate):
-    command = f"ffmpeg -framerate {frame_rate} -i " + temp_folder + "/newFrame%06d.jpg -i " + temp_folder + "/audioNew.wav -strict -2 " + output_file
-    subprocess.call(command, shell=True)
-
-
-def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE,
-                            SAMPLE_RATE, NEW_SPEED):
-    output_file = args.output_file if len(args.output_file) >= 1 else output_filename(input_file, args.output_dir)
-
+def process_and_concatenate(video):
     audio_fade_envelope_size = 400  # smooth out transition's audio by quickly fading in/out
 
-    save_audio(input_file, temp_folder, SAMPLE_RATE)
+    video.save_audio()
 
-    sample_rate, audio_data = wavfile.read(temp_folder + "/audio.wav")
+    sample_rate, audio_data = wavfile.read(video.temp_folder + "/audio.wav")
     audio_sample_count = audio_data.shape[0]
     max_audio_volume = get_max_volume(audio_data)
 
-    create_params_file(temp_folder)
-
-    with open(temp_folder + "/params.txt", 'r+') as f:
-        pre_params = f.read()
-    params = pre_params.split('\n')
-    for line in params:
-        m = re.search('Stream #.*Video.* ([0-9]*) fps', line)
-        if m is not None:
-            frame_rate = float(m.group(1))
-
-    samples_per_frame = sample_rate / frame_rate
+    samples_per_frame = sample_rate / video.fps
 
     audio_frame_count = int(math.ceil(audio_sample_count / samples_per_frame))
 
@@ -142,18 +191,18 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
 
     last_existing_frame = None
 
-    command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {input_file}"
+    command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {video.filename}"
     duration = subprocess.check_output(command, shell=True)
 
-    frames_num = int(float(duration) * fps)
+    frames_num = int(float(duration) * video.fps)
     signed_frames = [False for _ in range(frames_num)]
     output_frames = []
 
     for chunk in chunks:
         audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
 
-        s_file = temp_folder + "/tempStart.wav"
-        e_file = temp_folder + "/tempEnd.wav"
+        s_file = video.temp_folder + "/tempStart.wav"
+        e_file = video.temp_folder + "/tempEnd.wav"
         wavfile.write(s_file, SAMPLE_RATE, audio_chunk)
         with WavReader(s_file) as reader:
             with WavWriter(e_file, reader.channels, reader.samplerate) as writer:
@@ -177,7 +226,6 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
 
         for outputFrame in range(start_output_frame, end_output_frame):
             input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (outputFrame - start_output_frame))
-            # did_it_work = copy_frame(input_frame, outputFrame, temp_folder)
             if input_frame < frames_num - 2:
                 signed_frames[input_frame + 1] = True
                 last_existing_frame = input_frame
@@ -190,102 +238,69 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
     j = 0
     for i, frame_sign in enumerate(signed_frames):
         if frame_sign:
-            copy_frame(i, j, temp_folder)
+            copy_frame(i, j, video.temp_folder)
             j += 1
-    wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
+    wavfile.write(video.temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
 
-    final_concatenation(temp_folder, output_file, frame_rate)
-    delete_path(temp_folder)
+    video.final_concatenation()
+    delete_path(video.temp_folder)
 
 
-def run(input_file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED):
-    temp_folder = "TEMP"
+def run(video):
+    if os.path.exists(video.temp_folder):
+        delete_path(video.temp_folder)
+    create_path(video.temp_folder)
 
-    if os.path.exists(temp_folder):
-        delete_path(temp_folder)
-    create_path(temp_folder)
-
-    if not os.path.exists(args.output_dir):
-        create_path(args.output_dir)
-    process_1 = Process(target=save_video, args=(input_file, temp_folder, FRAME_QUALITY))
-    process_2 = Process(target=process_and_concatenate, args=(
-        input_file, temp_folder, fps, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED))
+    if not os.path.exists(OUTPUT_DIR):
+        create_path(OUTPUT_DIR)
+    process_1 = Process(target=video.save_video)
+    process_2 = Process(target=process_and_concatenate, args=(video,))
     process_1.start()
     process_2.start()
+    if not PARALLEL_ALL:
+        process_1.join()
+        process_2.join()
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description='Modifies a video file to play at different speeds when there is sound vs. silence.')
-    parser.add_argument('--input_file', type=str, help='Video file to modify')
-    parser.add_argument('--input_dir', type=str, help='Directory with videos to modify')
-    parser.add_argument('--url_file', type=str, help='Path to file with youtube urls')
-    parser.add_argument('--url', type=str, help='Youtube url of video')
-    parser.add_argument('--output_file', type=str, default="",
-                        help="the output file")
-    parser.add_argument('--output_dir', type=str, default="output_videos",
-                        help="Directory for output videos, default is \"..\output_videos\"")
-    parser.add_argument('--silent_threshold', type=float, default=0.03,
-                        help="Volume value that frames' audio needs to surpass to be consider \"sounded\". "
-                             "It ranges from 0 (silence) to 1 (max volume)")
-    parser.add_argument('--sounded_speed', type=float, default=1.00,
-                        help="Speed that sounded (spoken) frames should be played at, usually 1")
-    parser.add_argument('--silent_speed', type=float, default=5.00,
-                        help="Speed that silent frames should be played at")
-    parser.add_argument('--frame_margin', type=float, default=1,
-                        help="Some silent frames adjacent to sounded frames are included to provide context. "
-                             "This variable shows how many frames on either the side of speech should be included")
-    parser.add_argument('--sample_rate', type=float, default=44100, help="Sample rate of the input and output videos")
-    parser.add_argument('--frame_rate', type=float, default=25,
-                        help="Fps of input and output videos")
-    parser.add_argument('--frame_quality', type=int, default=3,
-                        help="Quality of frames to be extracted from input video. "
-                             "1 is highest, 31 is lowest, 3 is the default.")
-    args = parser.parse_args()
-
     print('Started')
-
-    frame_rate = args.frame_rate
-    SAMPLE_RATE = args.sample_rate
-    SILENT_THRESHOLD = args.silent_threshold
-    FRAME_SPREADAGE = args.frame_margin
-    NEW_SPEED = [args.silent_speed, args.sounded_speed]
-    fps = 25
 
     q = deque()
     if args.url:
-        path, fps = download_file(args.url)
-        q.append(path)
-        frame_rate = fps
+        q.append(
+            Video(output_file=args.output_file, url=args.url))
     elif args.url_file:
         file_path = args.url_file
         assert os.path.isfile(file_path), f"invalid file path: {file_path}"
         with open(file_path, 'r') as f:
             for url in f.read().split('\n'):
-                path, fps = download_file(url)
-                q.append(path)
-                frame_rate = fps
+                q.append(
+                    Video(output_file=args.output_file, url=url))
     elif args.input_file:
-        q.append(args.input_file)
+        if not os.path.isfile(args.input_file):
+            raise ValueError(f'file {args.input_file} does not exist')
+        q.append(Video(output_file=args.output_file, file_path=args.input_file))
     elif args.input_dir:
+        if not os.path.isdir(args.input_dir):
+            raise ValueError(f'{args.input_dir} is not a valid directory')
         for filename in os.listdir(args.input_dir):
+            if not os.path.isfile(filename):
+                print(f'file {filename} does not exist')
+                continue
             full_filename = os.path.join(args.input_dir, filename)
-            fps = 25
             if valid_format(full_filename):
-                q.append(full_filename)
+                q.append(Video(output_file=args.output_file, file_path=full_filename))
             else:
                 print(f'Invalid file format: {full_filename}')
     else:
         raise ValueError("no input file")
-    URL = args.url
-    FRAME_QUALITY = args.frame_quality
 
     i = 0
     while len(q) != 0:
-        file = q.popleft()
+        video = q.popleft()
         try:
             print(f'Downloading {i} video')
-            run(file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED)
+            run(video)
             i += 1
         except Exception as ex:
-            print(f'Exception at {file}:', ex)
+            print(f'Exception at {video.filename}:', ex)
