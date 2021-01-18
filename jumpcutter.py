@@ -12,6 +12,8 @@ from pytube import YouTube
 from collections import deque
 from multiprocessing import Process
 
+from time import time
+
 
 def download_file(url):
     stream = YouTube(url).streams.get_highest_resolution()
@@ -66,80 +68,17 @@ def delete_path(s):
         print(e)
 
 
-parser = argparse.ArgumentParser(
-    description='Modifies a video file to play at different speeds when there is sound vs. silence.')
-parser.add_argument('--input_file', type=str, help='Video file to modify')
-parser.add_argument('--input_dir', type=str, help='Directory with videos to modify')
-parser.add_argument('--url_file', type=str, help='Path to file with youtube urls')
-parser.add_argument('--url', type=str, help='Youtube url of video')
-parser.add_argument('--output_file', type=str, default="",
-                    help="the output file")
-parser.add_argument('--output_dir', type=str, default="output_videos",
-                    help="Directory for output videos, default is \"..\output_videos\"")
-parser.add_argument('--silent_threshold', type=float, default=0.03,
-                    help="Volume value that frames' audio needs to surpass to be consider \"sounded\". "
-                         "It ranges from 0 (silence) to 1 (max volume)")
-parser.add_argument('--sounded_speed', type=float, default=1.00,
-                    help="Speed that sounded (spoken) frames should be played at, usually 1")
-parser.add_argument('--silent_speed', type=float, default=5.00,
-                    help="Speed that silent frames should be played at")
-parser.add_argument('--frame_margin', type=float, default=1,
-                    help="Some silent frames adjacent to sounded frames are included to provide context. "
-                         "This variable shows how many frames on either the side of speech should be included")
-parser.add_argument('--sample_rate', type=float, default=44100, help="Sample rate of the input and output videos")
-parser.add_argument('--frame_rate', type=float, default=25,
-                    help="Fps of input and output videos")
-parser.add_argument('--frame_quality', type=int, default=3,
-                    help="Quality of frames to be extracted from input video. "
-                         "1 is highest, 31 is lowest, 3 is the default.")
-args = parser.parse_args()
-
-print('Started')
-
-frame_rate = args.frame_rate
-SAMPLE_RATE = args.sample_rate
-SILENT_THRESHOLD = args.silent_threshold
-FRAME_SPREADAGE = args.frame_margin
-NEW_SPEED = [args.silent_speed, args.sounded_speed]
-
-q = deque()
-if args.url:
-    path, fps = download_file(args.url)
-    q.append(path)
-    frame_rate = fps
-elif args.url_file:
-    file_path = args.url_file
-    assert os.path.isfile(file_path), f"invalid file path: {file_path}"
-    with open(file_path, 'r') as f:
-        for url in f.read().split('\n'):
-            path, fps = download_file(url)
-            q.append(path)
-            frame_rate = fps
-elif args.input_file:
-    q.append(args.input_file)
-elif args.input_dir:
-    for filename in os.listdir(args.input_dir):
-        full_filename = os.path.join(args.input_dir, filename)
-        if valid_format(full_filename):
-            q.append(full_filename)
-        else:
-            print(f'Invalid file format: {full_filename}')
-else:
-    raise ValueError("no input file")
-URL = args.url
-FRAME_QUALITY = args.frame_quality
-
 import multiprocessing
 
 
-def save_audio(input_file, temp_folder):
+def save_audio(input_file, temp_folder, SAMPLE_RATE):
     # multiprocessing.freeze_support()
     command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
         SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
     subprocess.call(command, shell=True)
 
 
-def save_video(input_file, temp_folder):
+def save_video(input_file, temp_folder, FRAME_QUALITY):
     command = "ffmpeg -i " + input_file + " -qscale:v " + str(
         FRAME_QUALITY) + " " + temp_folder + "/frame%06d.jpg -hide_banner"
     subprocess.call(command, shell=True)
@@ -151,19 +90,20 @@ def create_params_file(temp_folder):
         subprocess.call(command, shell=True, stdout=f)
 
 
-def final_concatenation(temp_folder, output_file):
+def final_concatenation(temp_folder, output_file, frame_rate):
     command = f"ffmpeg -framerate {frame_rate} -i " + temp_folder + "/newFrame%06d.jpg -i " + temp_folder + "/audioNew.wav -strict -2 " + output_file
     subprocess.call(command, shell=True)
 
     # delete_path(temp_folder)
 
 
-def process_and_concatenate(input_file, temp_folder, frame_rate=frame_rate, fps=frame_rate):
+def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE,
+                            SAMPLE_RATE, NEW_SPEED):
     output_file = args.output_file if len(args.output_file) >= 1 else output_filename(input_file, args.output_dir)
 
     audio_fade_envelope_size = 400  # smooth out transition's audio by quickly fading in/out
 
-    save_audio(input_file, temp_folder)
+    save_audio(input_file, temp_folder, SAMPLE_RATE)
 
     sample_rate, audio_data = wavfile.read(temp_folder + "/audio.wav")
     audio_sample_count = audio_data.shape[0]
@@ -267,16 +207,15 @@ def process_and_concatenate(input_file, temp_folder, frame_rate=frame_rate, fps=
             if frame_sign:
                 copy_frame(i, j, temp_folder)
                 j += 1
-            print(j)
         wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
         print("ARRAY:", signed_frames)
     except:
         exit()
 
-    final_concatenation(temp_folder, output_file)
+    final_concatenation(temp_folder, output_file, frame_rate)
 
 
-def run(input_file):
+def run(input_file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED):
     temp_folder = "TEMP"
 
     if os.path.exists(temp_folder):
@@ -285,20 +224,89 @@ def run(input_file):
 
     if not os.path.exists(args.output_dir):
         create_path(args.output_dir)
-    process_1 = Process(target=save_audio, args=(input_file, temp_folder))
-    # process_2 = Process(target=process_and_concatenate, args=(input_file, temp_folder))
+    process_1 = Process(target=save_video, args=(input_file, temp_folder, FRAME_QUALITY))
+    process_2 = Process(target=process_and_concatenate, args=(
+    input_file, temp_folder, fps, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED))
     process_1.start()
-    # process_2.start()
+    process_2.start()
 
 
 if __name__ == '__main__':
-    # multiprocessing.freeze_support()
+    ST = time()
+
+    parser = argparse.ArgumentParser(
+        description='Modifies a video file to play at different speeds when there is sound vs. silence.')
+    parser.add_argument('--input_file', type=str, help='Video file to modify')
+    parser.add_argument('--input_dir', type=str, help='Directory with videos to modify')
+    parser.add_argument('--url_file', type=str, help='Path to file with youtube urls')
+    parser.add_argument('--url', type=str, help='Youtube url of video')
+    parser.add_argument('--output_file', type=str, default="",
+                        help="the output file")
+    parser.add_argument('--output_dir', type=str, default="output_videos",
+                        help="Directory for output videos, default is \"..\output_videos\"")
+    parser.add_argument('--silent_threshold', type=float, default=0.03,
+                        help="Volume value that frames' audio needs to surpass to be consider \"sounded\". "
+                             "It ranges from 0 (silence) to 1 (max volume)")
+    parser.add_argument('--sounded_speed', type=float, default=1.00,
+                        help="Speed that sounded (spoken) frames should be played at, usually 1")
+    parser.add_argument('--silent_speed', type=float, default=5.00,
+                        help="Speed that silent frames should be played at")
+    parser.add_argument('--frame_margin', type=float, default=1,
+                        help="Some silent frames adjacent to sounded frames are included to provide context. "
+                             "This variable shows how many frames on either the side of speech should be included")
+    parser.add_argument('--sample_rate', type=float, default=44100, help="Sample rate of the input and output videos")
+    parser.add_argument('--frame_rate', type=float, default=25,
+                        help="Fps of input and output videos")
+    parser.add_argument('--frame_quality', type=int, default=3,
+                        help="Quality of frames to be extracted from input video. "
+                             "1 is highest, 31 is lowest, 3 is the default.")
+    args = parser.parse_args()
+
+    print('Started')
+
+    frame_rate = args.frame_rate
+    SAMPLE_RATE = args.sample_rate
+    SILENT_THRESHOLD = args.silent_threshold
+    FRAME_SPREADAGE = args.frame_margin
+    NEW_SPEED = [args.silent_speed, args.sounded_speed]
+    fps = 25
+
+    q = deque()
+    if args.url:
+        path, fps = download_file(args.url)
+        q.append(path)
+        frame_rate = fps
+    elif args.url_file:
+        file_path = args.url_file
+        assert os.path.isfile(file_path), f"invalid file path: {file_path}"
+        with open(file_path, 'r') as f:
+            for url in f.read().split('\n'):
+                path, fps = download_file(url)
+                q.append(path)
+                frame_rate = fps
+    elif args.input_file:
+        q.append(args.input_file)
+    elif args.input_dir:
+        for filename in os.listdir(args.input_dir):
+            full_filename = os.path.join(args.input_dir, filename)
+            fps = 25
+            if valid_format(full_filename):
+                q.append(full_filename)
+            else:
+                print(f'Invalid file format: {full_filename}')
+    else:
+        raise ValueError("no input file")
+    URL = args.url
+    FRAME_QUALITY = args.frame_quality
+
     i = 0
     while len(q) != 0:
         file = q.popleft()
         try:
             print(f'Downloading {i} video')
-            run(file)
+            run(file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED)
             i += 1
         except Exception as ex:
             print(f'Exception at {file}:', ex)
+
+    print('TIME:', time() - ST)
