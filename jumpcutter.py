@@ -12,8 +12,6 @@ from pytube import YouTube
 from collections import deque
 from multiprocessing import Process
 
-from time import time
-
 
 def download_file(url):
     stream = YouTube(url).streams.get_highest_resolution()
@@ -68,11 +66,7 @@ def delete_path(s):
         print(e)
 
 
-import multiprocessing
-
-
 def save_audio(input_file, temp_folder, SAMPLE_RATE):
-    # multiprocessing.freeze_support()
     command = "ffmpeg -i " + input_file + " -ab 160k -ac 2 -ar " + str(
         SAMPLE_RATE) + " -vn " + temp_folder + "/audio.wav"
     subprocess.call(command, shell=True)
@@ -93,8 +87,6 @@ def create_params_file(temp_folder):
 def final_concatenation(temp_folder, output_file, frame_rate):
     command = f"ffmpeg -framerate {frame_rate} -i " + temp_folder + "/newFrame%06d.jpg -i " + temp_folder + "/audioNew.wav -strict -2 " + output_file
     subprocess.call(command, shell=True)
-
-    # delete_path(temp_folder)
 
 
 def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE,
@@ -152,14 +144,9 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
 
     command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {input_file}"
     duration = subprocess.check_output(command, shell=True)
-    # print('frames_num'.upper(), res)
-    # print('fps'.upper(), fps)
-    # exit()
-    frames_num = int(float(duration) * fps)
-    # print('frames_num'.upper(), frames_num)
-    # exit()
-    signed_frames = [False for _ in range(frames_num)]
 
+    frames_num = int(float(duration) * fps)
+    signed_frames = [False for _ in range(frames_num)]
     output_frames = []
 
     for chunk in chunks:
@@ -177,12 +164,11 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
         end_pointer = output_pointer + leng
         output_audio_data = np.concatenate((output_audio_data, altered_audio_data / max_audio_volume))
 
-        # smooth out transition's audio by quickly fading in/out
         if leng < audio_fade_envelope_size:
-            output_audio_data[output_pointer:end_pointer] = 0  # audio is less than 0.01 sec, let's just remove it.
+            output_audio_data[output_pointer:end_pointer] = 0
         else:
             pre_mask = np.arange(audio_fade_envelope_size) / audio_fade_envelope_size
-            mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)  # make the fade-envelope mask stereo
+            mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)
             output_audio_data[output_pointer:output_pointer + audio_fade_envelope_size] *= mask
             output_audio_data[end_pointer - audio_fade_envelope_size:end_pointer] *= 1 - mask
 
@@ -201,18 +187,15 @@ def process_and_concatenate(input_file, temp_folder, frame_rate, fps, args, SILE
 
         output_pointer = end_pointer
 
-    try:
-        j = 0
-        for i, frame_sign in enumerate(signed_frames):
-            if frame_sign:
-                copy_frame(i, j, temp_folder)
-                j += 1
-        wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
-        print("ARRAY:", signed_frames)
-    except:
-        exit()
+    j = 0
+    for i, frame_sign in enumerate(signed_frames):
+        if frame_sign:
+            copy_frame(i, j, temp_folder)
+            j += 1
+    wavfile.write(temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
 
     final_concatenation(temp_folder, output_file, frame_rate)
+    delete_path(temp_folder)
 
 
 def run(input_file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED):
@@ -226,14 +209,12 @@ def run(input_file, args, FRAME_QUALITY, fps, SILENT_THRESHOLD, FRAME_SPREADAGE,
         create_path(args.output_dir)
     process_1 = Process(target=save_video, args=(input_file, temp_folder, FRAME_QUALITY))
     process_2 = Process(target=process_and_concatenate, args=(
-    input_file, temp_folder, fps, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED))
+        input_file, temp_folder, fps, fps, args, SILENT_THRESHOLD, FRAME_SPREADAGE, SAMPLE_RATE, NEW_SPEED))
     process_1.start()
     process_2.start()
 
 
 if __name__ == '__main__':
-    ST = time()
-
     parser = argparse.ArgumentParser(
         description='Modifies a video file to play at different speeds when there is sound vs. silence.')
     parser.add_argument('--input_file', type=str, help='Video file to modify')
@@ -308,5 +289,3 @@ if __name__ == '__main__':
             i += 1
         except Exception as ex:
             print(f'Exception at {file}:', ex)
-
-    print('TIME:', time() - ST)
