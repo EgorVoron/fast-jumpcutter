@@ -103,11 +103,6 @@ class Video:
         command = f"ffmpeg -i {self.filename} -qscale:v {FRAME_QUALITY} {self.temp_folder}/frame%06d.jpg -hide_banner"
         subprocess.call(command, shell=True)
 
-    # def create_params_file(self):
-    #     command = "ffmpeg -i " + self.temp_folder + "/input.mp4 2>&1"
-    #     with open(self.temp_folder + "/params.txt", "w") as f:
-    #         subprocess.call(command, shell=True, stdout=f)
-
     def final_concatenation(self):
         command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " \
                   + self.temp_folder + "/audioNew.wav -strict -2 " + self.output_filename
