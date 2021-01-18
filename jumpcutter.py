@@ -59,7 +59,10 @@ PARALLEL_ALL = args.parallel_all
 class Video:
     def __init__(self, output_file, url=None, file_path=None):
         self.temp_folder = "TEMP" + str(randint(1, 10 ** 5))
-        if url:
+        if file_path:
+            self.filename = file_path
+            self.fps = self.get_fps()
+        elif url:
             streams: StreamQuery = YouTube(url).streams
             highest_stream = streams.get_highest_resolution()
             highest_res = int(highest_stream.resolution[:-1])
@@ -77,9 +80,6 @@ class Video:
             name = stream.download()
             self.filename = name.replace(' ', '_')
             os.rename(name, self.filename)
-        elif file_path:
-            self.filename = file_path
-            self.fps = self.get_fps()
         else:
             raise ValueError('cannot initialize video')
 
@@ -248,22 +248,6 @@ def delete_path(s):
         print(e)
 
 
-def run(video):
-    if os.path.exists(video.temp_folder):
-        delete_path(video.temp_folder)
-    create_path(video.temp_folder)
-
-    if not os.path.exists(OUTPUT_DIR):
-        create_path(OUTPUT_DIR)
-    process_1 = Process(target=video.save_video)
-    process_2 = Process(target=video.process_and_concatenate)
-    process_1.start()
-    process_2.start()
-    if not PARALLEL_ALL:
-        process_1.join()
-        process_2.join()
-
-
 if __name__ == '__main__':
     print('Started')
 
@@ -301,7 +285,20 @@ if __name__ == '__main__':
         video = q.popleft()
         try:
             print(f'Downloading {i} video')
-            run(video)
+            if os.path.exists(video.temp_folder):
+                delete_path(video.temp_folder)
+            create_path(video.temp_folder)
+
+            if not os.path.exists(OUTPUT_DIR):
+                create_path(OUTPUT_DIR)
+            frames_saving_process = Process(target=video.save_video)
+            audio_processing_process = Process(target=video.process_and_concatenate)
+            frames_saving_process.start()
+            audio_processing_process.start()
+            if not PARALLEL_ALL:
+                frames_saving_process.join()
+                audio_processing_process.join()
+
             i += 1
         except Exception as ex:
             print(f'Exception at {video.filename}:', ex)
