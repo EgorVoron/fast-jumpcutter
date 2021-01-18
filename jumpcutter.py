@@ -93,6 +93,8 @@ parser.add_argument('--frame_quality', type=int, default=3,
                          "1 is highest, 31 is lowest, 3 is the default.")
 args = parser.parse_args()
 
+print('Started')
+
 frame_rate = args.frame_rate
 SAMPLE_RATE = args.sample_rate
 SILENT_THRESHOLD = args.silent_threshold
@@ -245,9 +247,12 @@ def run(input_file, frame_rate=frame_rate):
     delete_path(temp_folder)
 
 
+i = 0
 while len(q) != 0:
     file = q.popleft()
     try:
+        print(f'Downloading {i} video')
         run(file)
+        i += 1
     except Exception as ex:
         print(f'Exception at {file}:', ex)
