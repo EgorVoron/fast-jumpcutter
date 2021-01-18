@@ -109,8 +109,19 @@ class Video:
             subprocess.call(command, shell=True, stdout=f)
 
     def final_concatenation(self):
-        command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " + self.temp_folder + "/audioNew.wav -strict -2 " + self.output_filename
+        command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " \
+                  + self.temp_folder + "/audioNew.wav -strict -2 " + self.output_filename
         subprocess.call(command, shell=True)
+
+    def copy_frame(self, input_frame: int, output_frame: int):
+        src = self.temp_folder + "/frame{:06d}".format(input_frame + 1) + ".jpg"
+        dst = self.temp_folder + "/newFrame{:06d}".format(output_frame + 1) + ".jpg"
+        if not os.path.isfile(src):
+            return False
+        os.rename(src, dst)
+        if output_frame == 1 or output_frame % 1000 == 999:
+            print(str(output_frame + 1) + " time-altered frames saved.")
+        return True
 
 
 def valid_format(filename):
@@ -123,17 +134,6 @@ def get_max_volume(s):
     min_volume = float(np.min(s))
     max_volume = float(np.max(s))
     return max(max_volume, -min_volume)
-
-
-def copy_frame(input_frame, output_frame, tmp_folder):
-    src = tmp_folder + "/frame{:06d}".format(input_frame + 1) + ".jpg"
-    dst = tmp_folder + "/newFrame{:06d}".format(output_frame + 1) + ".jpg"
-    if not os.path.isfile(src):
-        return False
-    os.rename(src, dst)
-    if output_frame == 1 or output_frame % 1000 == 999:
-        print(str(output_frame + 1) + " time-altered frames saved.")
-    return True
 
 
 def create_path(s):
@@ -176,14 +176,17 @@ def process_and_concatenate(video):
 
     chunks = [[0, 0, 0]]
     should_include_frame = np.zeros(audio_frame_count)
+
+    last_idx = 0
     for i in range(audio_frame_count):
         start = int(max(0, i - FRAME_SPREADAGE))
         end = int(min(audio_frame_count, i + 1 + FRAME_SPREADAGE))
         should_include_frame[i] = np.max(has_loud_audio[start:end])
         if i >= 1 and should_include_frame[i] != should_include_frame[i - 1]:  # Did we flip?
             chunks.append([chunks[-1][1], i, should_include_frame[i - 1]])
+        last_idx = i
 
-    chunks.append([chunks[-1][1], audio_frame_count, should_include_frame[i - 1]])
+    chunks.append([chunks[-1][1], audio_frame_count, should_include_frame[last_idx - 1]])
     chunks = chunks[1:]
 
     output_audio_data = np.zeros((0, audio_data.shape[1]))
@@ -238,7 +241,7 @@ def process_and_concatenate(video):
     j = 0
     for i, frame_sign in enumerate(signed_frames):
         if frame_sign:
-            copy_frame(i, j, video.temp_folder)
+            video.copy_frame(i, j)
             j += 1
     wavfile.write(video.temp_folder + "/audioNew.wav", SAMPLE_RATE, output_audio_data)
 
