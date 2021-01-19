@@ -29,7 +29,7 @@ parser.add_argument('--parallel_all', type=int, default=0,
                     help='Download and process all videos at one time(1), or one by one(0)? Default is 0.'
                          'Use it wisely - if you insert some big videos, then parallel processing can'
                          ' kill your computer')
-parser.add_argument('--resolution', type=int, default=480, help='Default resolution of youtube video to download')
+parser.add_argument('--resolution', type=str, default="480p", help='Default resolution of youtube video to download')
 parser.add_argument('--silent_threshold', type=float, default=0.03,
                     help="Volume value that frames' audio needs to surpass to be consider \"sounded\". "
                          "It ranges from 0 (silence) to 1 (max volume)")
@@ -53,6 +53,7 @@ NEW_SPEED = [args.silent_speed, args.sounded_speed]
 FRAME_QUALITY = args.frame_quality
 OUTPUT_DIR = args.output_dir
 RESOLUTION = args.resolution
+RESOLUTION_INT = int(RESOLUTION[:-1])
 PARALLEL_ALL = args.parallel_all
 
 
@@ -64,20 +65,18 @@ class Video:
             self.fps = self.get_fps()
         elif url:
             streams: StreamQuery = YouTube(url).streams
-            highest_stream = streams.get_highest_resolution()
-            highest_res = int(highest_stream.resolution[:-1])
-            stream = None
-            if highest_res > RESOLUTION:
-                for cur_stream in streams:
-                    if int(cur_stream.resolution[:-1]) == RESOLUTION:
-                        stream = cur_stream
-                        break
-                if not stream:
-                    stream = highest_res
-            else:
-                stream = highest_stream
-            self.fps = stream.fps
-            name = stream.download()
+            progressive_streams = streams.filter(progressive=True).order_by("resolution").fmt_streams
+            result_stream = None
+            for stream in progressive_streams:
+                res_int = stream.resolution[:-1]
+                if int(res_int) >= RESOLUTION_INT:
+                    result_stream = stream
+
+            # since usually there's no 480p progressive streams, result_stream would have 720p resolution
+            # todo: download audio and video separately and merge them
+            result_stream = result_stream if result_stream else streams.get_highest_resolution()
+            self.fps = result_stream.fps
+            name = result_stream.download()
             self.filename = name.replace(' ', '_')
             os.rename(name, self.filename)
         else:
