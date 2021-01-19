@@ -35,7 +35,7 @@ parser.add_argument('--silent_threshold', type=float, default=0.03,
                          "It ranges from 0 (silence) to 1 (max volume)")
 parser.add_argument('--sounded_speed', type=float, default=1.00,
                     help="Speed that sounded (spoken) frames should be played at, usually 1")
-parser.add_argument('--silent_speed', type=float, default=4.00,
+parser.add_argument('--silent_speed', type=float, default=5.00,
                     help="Speed that silent frames should be played at")
 parser.add_argument('--frame_margin', type=float, default=1,
                     help="Some silent frames adjacent to sounded frames are included to provide context. "
