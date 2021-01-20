@@ -275,6 +275,9 @@ if __name__ == '__main__':
     else:
         raise ValueError("no input file")
 
+    if not os.path.exists(OUTPUT_DIR):
+        create_path(OUTPUT_DIR)
+
     i = 0
     while len(q) != 0:
         video = q.popleft()
@@ -284,8 +287,6 @@ if __name__ == '__main__':
                 delete_path(video.temp_folder)
             create_path(video.temp_folder)
 
-            if not os.path.exists(OUTPUT_DIR):
-                create_path(OUTPUT_DIR)
             frames_saving_process = Process(target=video.save_video)
             audio_processing_process = Process(target=video.process_and_concatenate)
             frames_saving_process.start()
