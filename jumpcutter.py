@@ -19,8 +19,6 @@ parser.add_argument('--input_file', type=str, help='Video file to modify')
 parser.add_argument('--input_dir', type=str, help='Directory with videos to modify')
 parser.add_argument('--url_file', type=str, help='Path to file with youtube urls')
 parser.add_argument('--url', type=str, help='Youtube url of video')
-parser.add_argument('--output_file', type=str, default="",
-                    help="the output file")
 parser.add_argument('--output_dir', type=str, default="output_videos",
                     help="Directory for output videos, default is \"..\output_videos\"")
 
@@ -58,7 +56,7 @@ PARALLEL_ALL = args.parallel_all
 
 
 class Video:
-    def __init__(self, output_file, url=None, file_path=None):
+    def __init__(self, url=None, file_path=None):
         self.temp_folder = "TEMP" + str(randint(1, 10 ** 5))
         if file_path:
             self.filename = file_path
@@ -82,7 +80,7 @@ class Video:
         else:
             raise ValueError('cannot initialize video')
 
-        self.output_filename = output_file if output_file else self.get_output_filename()
+        self.output_filename = self.get_output_filename()
 
     def get_output_filename(self):
         basename = os.path.basename(self.filename)
@@ -247,7 +245,7 @@ if __name__ == '__main__':
 
     q = deque()
     if args.url:
-        q.append(Video(url=args.url, output_file=args.output_file))
+        q.append(Video(url=args.url))
     elif args.url_file:
         file_path = args.url_file
         abspath = os.path.abspath(file_path)
@@ -255,13 +253,13 @@ if __name__ == '__main__':
         with open(file_path, 'r') as f:
             for url in f.read().split('\n'):
                 if url:
-                    q.append(Video(url=url, output_file=args.output_file))
+                    q.append(Video(url=url))
                 else:
                     print(f'invalid url: {url}')
     elif args.input_file:
         abspath = os.path.abspath(args.input_file)
         assert os.path.isfile(abspath), f"invalid input file path: {abspath}"
-        q.append(Video(file_path=args.input_file, output_file=args.output_file))
+        q.append(Video(file_path=args.input_file))
     elif args.input_dir:
         abspath = os.path.abspath(args.input_dir)
         assert os.path.isdir(abspath), f"invalid directory: {abspath}"
@@ -271,7 +269,7 @@ if __name__ == '__main__':
                 print(f'file {full_filename} does not exist')
                 continue
             if valid_format(full_filename):
-                q.append(Video(file_path=full_filename, output_file=args.output_file))
+                q.append(Video(file_path=full_filename))
             else:
                 print(f'Invalid file format: {full_filename}')
     else:
