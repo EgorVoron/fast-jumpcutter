@@ -11,6 +11,7 @@ from pytube import YouTube, StreamQuery
 from collections import deque
 from multiprocessing import Process
 from random import randint
+from warnings import warn
 
 # VIDEO INITIALISATION INFO
 parser = argparse.ArgumentParser(
@@ -255,7 +256,7 @@ if __name__ == '__main__':
                 if url:
                     q.append(Video(url=url))
                 else:
-                    print(f'invalid url: {url}')
+                    warn(f'invalid url: {url}')
     elif args.input_file:
         abspath = os.path.abspath(args.input_file)
         assert os.path.isfile(abspath), f"invalid input file path: {abspath}"
@@ -266,12 +267,12 @@ if __name__ == '__main__':
         for filename in os.listdir(args.input_dir):
             full_filename = os.path.join(args.input_dir, filename)
             if not os.path.isfile(full_filename):
-                print(f'file {full_filename} does not exist')
+                warn(f'file {full_filename} does not exist')
                 continue
             if valid_format(full_filename):
                 q.append(Video(file_path=full_filename))
             else:
-                print(f'Invalid file format: {full_filename}')
+                warn(f'invalid file format: {full_filename}')
     else:
         raise ValueError("no input file")
 
