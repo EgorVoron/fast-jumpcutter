@@ -86,11 +86,9 @@ class Video:
                 self.filename = fix_filename(video_stream.download())
             else:
                 video_filename = fix_filename(video_stream.download())
-                print('video: ', video_filename)
                 audio_stream = \
                     YouTube(url).streams.filter(progressive=False, only_audio=True).order_by("abr").fmt_streams[-1]
                 audio_filename = fix_filename(audio_stream.download())
-                print('audio: ', audio_filename)
                 self.filename = merge(video_filename, audio_filename)
         else:
             raise ValueError('cannot initialize video')
