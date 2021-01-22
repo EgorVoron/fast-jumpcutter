@@ -7,7 +7,7 @@ import math
 from shutil import rmtree
 import os
 import argparse
-from pytube import YouTube, StreamQuery
+from pytube import YouTube
 from collections import deque
 from multiprocessing import Process
 from random import randint
@@ -56,32 +56,48 @@ RESOLUTION_INT = int(RESOLUTION[:-1])
 PARALLEL_ALL = args.parallel_all
 
 
+def merge(input_video: str, input_audio: str) -> str:
+    dot_idx = input_video.rfind('.')
+    output_video = input_video[:dot_idx] + '_MERGED' + input_video[dot_idx:]
+    command = f"ffmpeg -i {input_video} -i {input_audio} -c:v copy -c:a aac {output_video}"
+    subprocess.call(command, shell=True)
+    os.remove(input_video)
+    os.remove(input_audio)
+    return output_video
+
+
+def fix_filename(filename: str):
+    fixed_filename = filename.replace(' ', '_')
+    os.rename(filename, fixed_filename)
+    return fixed_filename
+
+
 class Video:
     def __init__(self, url=None, file_path=None):
         self.temp_folder = "TEMP" + str(randint(1, 10 ** 5))
         if file_path:
             self.filename = file_path
-            self.fps = self.get_fps()
         elif url:
-            streams: StreamQuery = YouTube(url).streams
-            progressive_streams = streams.filter(progressive=True).order_by("resolution").fmt_streams
-            result_stream = None
-            for stream in progressive_streams:
-                res_int = stream.resolution[:-1]
-                if int(res_int) >= RESOLUTION_INT:
-                    result_stream = stream
+            video_streams = YouTube(url).streams.filter(progressive=False, only_video=True, resolution=RESOLUTION,
+                                                        mime_type="video/mp4").fmt_streams
+            video_stream = video_streams[0] if video_streams else YouTube(url).streams.get_highest_resolution()
 
-            # since usually there's no 480p progressive streams, result_stream would have 720p resolution
-            # todo: download audio and video separately and merge them
-            result_stream = result_stream if result_stream else streams.get_highest_resolution()
-            self.fps = result_stream.fps
-            name = result_stream.download()
-            self.filename = name.replace(' ', '_')
-            os.rename(name, self.filename)
+            if video_stream.is_progressive:
+                self.filename = fix_filename(video_stream.download())
+                print('prog')
+            else:
+                video_filename = fix_filename(video_stream.download())
+                print('video: ', video_filename)
+                audio_stream = \
+                    YouTube(url).streams.filter(progressive=False, only_audio=True).order_by("abr").fmt_streams[-1]
+                audio_filename = fix_filename(audio_stream.download())
+                print('audio: ', audio_filename)
+                self.filename = merge(video_filename, audio_filename)
         else:
             raise ValueError('cannot initialize video')
 
         self.output_filename = self.get_output_filename()
+        self.fps = self.get_fps()
 
     def get_output_filename(self):
         basename = os.path.basename(self.filename)
