@@ -84,7 +84,6 @@ class Video:
 
             if video_stream.is_progressive:
                 self.filename = fix_filename(video_stream.download())
-                print('prog')
             else:
                 video_filename = fix_filename(video_stream.download())
                 print('video: ', video_filename)
@@ -116,6 +115,10 @@ class Video:
     def save_video(self):
         command = f"ffmpeg -i {self.filename} -qscale:v {FRAME_QUALITY} {self.temp_folder}/frame%06d.jpg -hide_banner"
         subprocess.call(command, shell=True)
+
+    def get_duration(self):
+        command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {self.filename}"
+        return subprocess.check_output(command, shell=True)
 
     def final_concatenation(self):
         command = f"ffmpeg -framerate {self.fps} -i " + self.temp_folder + "/newFrame%06d.jpg -i " \
@@ -175,9 +178,7 @@ class Video:
 
         last_existing_frame = None
 
-        command = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {self.filename}"
-        duration = subprocess.check_output(command, shell=True)
-
+        duration = self.get_duration()
         frames_num = int(float(duration) * self.fps)
         signed_frames = [False for _ in range(frames_num)]
         output_frames = []
