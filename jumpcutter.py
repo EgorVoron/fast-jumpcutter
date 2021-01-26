@@ -298,7 +298,7 @@ if __name__ == '__main__':
     while len(q) != 0:
         video = q.popleft()
         try:
-            print(f'Downloading {i} video')
+            print(f'Processing #{i} video')
             if os.path.exists(video.temp_folder):
                 delete_path(video.temp_folder)
             create_path(video.temp_folder)
