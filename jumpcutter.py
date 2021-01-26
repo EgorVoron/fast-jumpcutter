@@ -13,6 +13,7 @@ from multiprocessing import Process
 from random import randint
 from warnings import warn
 
+
 # VIDEO INITIALISATION INFO
 parser = argparse.ArgumentParser(
     description='Modifies a video file to play at different speeds when there is sound vs. silence.')
@@ -170,53 +171,76 @@ class Video:
 
         chunks.append([chunks[-1][1], audio_frame_count, should_include_frame[last_idx - 1]])
         chunks = chunks[1:]
-
-        output_audio_data = np.zeros((0, audio_data.shape[1]))
-        output_pointer = 0
-
-        last_existing_frame = None
-
         duration = self.get_duration()
         frames_num = int(float(duration) * self.fps)
-        signed_frames = [False for _ in range(frames_num)]
-        output_frames = []
 
-        for chunk in chunks:
-            audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
+        def process_chunks(a, b, n, number):
+            last_existing_frame = None
+            print('audio_data.shape[1]'.upper(), audio_data.shape[1])
 
-            s_file = self.temp_folder + "/tempStart.wav"
-            e_file = self.temp_folder + "/tempEnd.wav"
-            wavfile.write(s_file, SAMPLE_RATE, audio_chunk)
-            with WavReader(s_file) as reader:
-                with WavWriter(e_file, reader.channels, reader.samplerate) as writer:
-                    tsm = phasevocoder(reader.channels, speed=NEW_SPEED[int(chunk[2])])
-                    tsm.run(reader, writer)
-            _, altered_audio_data = wavfile.read(e_file)
-            leng = altered_audio_data.shape[0]
-            end_pointer = output_pointer + leng
-            output_audio_data = np.concatenate((output_audio_data, altered_audio_data / max_audio_volume))
+            current_output_audio_data = np.zeros((0, audio_data.shape[1]))
+            current_signed_frames = [False for _ in range(frames_num//n + 1)]
+            output_pointer = 0  # const
+            for chunk in chunks[a:b]:
+                audio_chunk = audio_data[int(chunk[0] * samples_per_frame):int(chunk[1] * samples_per_frame)]
 
-            if leng < audio_fade_envelope_size:
-                output_audio_data[output_pointer:end_pointer] = 0
-            else:
-                pre_mask = np.arange(audio_fade_envelope_size) / audio_fade_envelope_size
-                mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)
-                output_audio_data[output_pointer:output_pointer + audio_fade_envelope_size] *= mask
-                output_audio_data[end_pointer - audio_fade_envelope_size:end_pointer] *= 1 - mask
+                files_id = randint(1, 10 ** 5)
+                s_file = self.temp_folder + f"/tempStart{files_id}.wav"
+                e_file = self.temp_folder + f"/tempEnd{files_id}.wav"
+                wavfile.write(s_file, SAMPLE_RATE, audio_chunk)
+                with WavReader(s_file) as reader:
+                    with WavWriter(e_file, reader.channels, reader.samplerate) as writer:
+                        tsm = phasevocoder(reader.channels, speed=NEW_SPEED[int(chunk[2])])
+                        tsm.run(reader, writer)
+                _, altered_audio_data = wavfile.read(e_file)
+                length = altered_audio_data.shape[0]
+                end_pointer = output_pointer + length
 
-            start_output_frame = int(math.ceil(output_pointer / samples_per_frame))
-            end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
+                # print('BEFORE CONCATENATE')
+                # print('current_output_audio_data'.upper(), current_output_audio_data)
+                # print('altered'.upper(), altered_audio_data / max_audio_volume)
+                current_output_audio_data = np.concatenate(
+                    (current_output_audio_data, altered_audio_data / max_audio_volume))
+                # print('AFTER CONCATENATE')
+                # print('current_output_audio_data'.upper(), current_output_audio_data)
 
-            for outputFrame in range(start_output_frame, end_output_frame):
-                input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (outputFrame - start_output_frame))
-                if input_frame < frames_num - 2:
-                    signed_frames[input_frame + 1] = True
-                    last_existing_frame = input_frame
+                if length < audio_fade_envelope_size:
+                    current_output_audio_data[output_pointer:end_pointer] = 0
                 else:
-                    signed_frames[last_existing_frame] = True
-                output_frames.append(outputFrame)
+                    pre_mask = np.arange(audio_fade_envelope_size) / audio_fade_envelope_size
+                    mask = np.repeat(pre_mask[:, np.newaxis], 2, axis=1)
+                    current_output_audio_data[output_pointer:output_pointer + audio_fade_envelope_size] *= mask
+                    current_output_audio_data[end_pointer - audio_fade_envelope_size:end_pointer] *= 1 - mask
 
-            output_pointer = end_pointer
+                start_output_frame = int(math.ceil(output_pointer / samples_per_frame))
+                end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
+
+                for output_frame in range(start_output_frame, end_output_frame):
+                    input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (output_frame - start_output_frame))
+                    if input_frame < frames_num - 2:
+                        print('len of current_signed_frames'.upper(), len(current_signed_frames))
+                        print('input_frame'.upper(), input_frame)
+                        current_signed_frames[input_frame % n + 1] = True
+                        last_existing_frame = input_frame
+                    else:
+                        current_signed_frames[last_existing_frame % n] = True
+
+                output_pointer = end_pointer
+
+            return number, current_signed_frames, current_output_audio_data
+
+        print('making res')
+        results = [process_chunks(0, len(chunks) // 2, 2, 0), process_chunks(len(chunks) // 2, len(chunks), 2, 1)]
+
+        results = sorted(results, key=lambda x: x[0])
+        print('sorted')
+        signed_frames = []
+        output_audio_data = np.zeros((0, audio_data.shape[1]))
+        for result in results:
+            print(result[0])
+            for x in result[1]:
+                signed_frames.append(x)
+            output_audio_data = np.concatenate((output_audio_data, result[2]))
 
         j = 0
         for i, frame_sign in enumerate(signed_frames):
