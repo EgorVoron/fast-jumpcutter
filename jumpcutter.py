@@ -267,9 +267,12 @@ if __name__ == '__main__':
         abspath = os.path.abspath(file_path)
         assert os.path.isfile(abspath), f"invalid urls file path: {abspath}"
         with open(file_path, 'r') as f:
-            for url in f.read().split('\n'):
+            for n, url in enumerate(f.read().split('\n')):
                 if url:
-                    q.append(Video(url=url))
+                    try:
+                        q.append(Video(url=url))
+                    except Exception as ex:
+                        print(f'Error while creating #{n} Video object: {ex}')
                 else:
                     warn(f'invalid url: {url}')
     elif args.input_file:
