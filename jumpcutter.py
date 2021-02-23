@@ -216,17 +216,20 @@ class Video:
                 end_output_frame = int(math.ceil(end_pointer / samples_per_frame))
 
                 for output_frame in range(start_output_frame, end_output_frame):
+
                     input_frame = int(chunk[0] + NEW_SPEED[int(chunk[2])] * (output_frame - start_output_frame))
+                    if input_frame > len(current_signed_frames)-2:
+                        break
                     if input_frame < frames_num - 2:
                         print('len of current_signed_frames'.upper(), len(current_signed_frames))
                         print('input_frame'.upper(), input_frame)
-                        current_signed_frames[input_frame % n + 1] = True
+                        current_signed_frames[input_frame + 1] = True
                         last_existing_frame = input_frame
                     else:
                         current_signed_frames[last_existing_frame % n] = True
 
                 output_pointer = end_pointer
-
+            print('CUR SIG', current_signed_frames)
             return number, current_signed_frames, current_output_audio_data
 
         print('making res')
